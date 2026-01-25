@@ -16,6 +16,48 @@ except Exception as e:
 
 st.set_page_config(page_title="Magazyn & POS PRO", layout="wide", page_icon="🏢")
 
+# --- DODANIE TŁA I STYLIZACJI CSS ---
+def add_bg_and_style():
+    st.markdown(
+        """
+        <style>
+        /* Tło główne aplikacji */
+        .stApp {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            background-attachment: fixed;
+        }
+
+        /* Stylizacja paska bocznego */
+        [data-testid="stSidebar"] {
+            background-color: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(10px);
+        }
+
+        /* Zaokrąglenie kontenerów i kart */
+        div[data-testid="metric-container"] {
+            background-color: rgba(255, 255, 255, 0.6);
+            padding: 15px;
+            border-radius: 15px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+
+        /* Stylizacja przycisków */
+        .stButton>button {
+            border-radius: 10px;
+            transition: all 0.3s ease;
+        }
+        
+        .stButton>button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+add_bg_and_style()
+
 # --- 2. FUNKCJE DANYCH ---
 @st.cache_data(ttl=2)
 def fetch_categories():
@@ -59,7 +101,6 @@ def create_pdf_receipt(cart, total):
     pdf.set_font("helvetica", "B", 14)
     pdf.cell(0, 10, f"RAZEM: {total:.2f} PLN", ln=True, align="R")
     
-    # Zwracamy dane jako czyste bajty (rozwiązuje błąd bytearray)
     return bytes(pdf.output())
 
 # --- 4. STAN SESJI ---
@@ -84,7 +125,7 @@ if menu == "📊 Dashboard":
         st.bar_chart(prods.set_index('nazwa')['liczba'])
 
 # ==========================================
-# MODUŁ: SPRZEDAŻ (POS) - PEŁNA POPRAWKA
+# MODUŁ: SPRZEDAŻ (POS)
 # ==========================================
 elif menu == "🛒 Sprzedaż (POS)":
     st.title("🛒 Punkt Sprzedaży")
@@ -96,14 +137,14 @@ elif menu == "🛒 Sprzedaż (POS)":
         col_in, col_out = st.columns([1, 1])
         with col_in:
             st.subheader("Dodaj do koszyka")
-            p_sel = st.selectbox("Produkt", prods['nazwa'].tolist())
+            p_sel = st.selectbox("Wybierz produkt", prods['nazwa'].tolist())
             p_data = prods[prods['nazwa'] == p_sel].iloc[0]
             max_qty = int(p_data['liczba'])
             
             st.info(f"Stan: {max_qty} | Cena: {p_data['cena']} zł")
             qty = st.number_input("Ilość", min_value=1, max_value=max(1, max_qty), step=1)
             
-            if st.button("➕ Dodaj"):
+            if st.button("➕ Dodaj do koszyka"):
                 if max_qty > 0:
                     st.session_state.cart.append({
                         "id": int(p_data['id']), "nazwa": p_sel, 
@@ -128,18 +169,14 @@ elif menu == "🛒 Sprzedaż (POS)":
                 
                 if st.button("✅ FINALIZUJ I POBIERZ PDF", type="primary"):
                     try:
-                        # Aktualizacja bazy danych
                         for item in st.session_state.cart:
                             res = supabase.table("produkty").select("liczba").eq("id", item['id']).execute()
                             new_val = int(res.data[0]['liczba']) - item['ilosc']
                             supabase.table("produkty").update({"liczba": new_val}).eq("id", item['id']).execute()
                         
-                        # Generowanie PDF
                         pdf_data = create_pdf_receipt(st.session_state.cart, total_sum)
-                        
                         st.success("Sprzedaż zakończona!")
                         st.download_button("📥 Pobierz Paragon", data=pdf_data, file_name="paragon.pdf", mime="application/pdf")
-                        
                         st.session_state.cart = []
                         st.cache_data.clear()
                     except Exception as e:
@@ -169,17 +206,17 @@ elif menu == "🍎 Magazyn":
 
     with t2:
         with st.form("new_p"):
-            n = st.text_input("Nazwa")
-            l = st.number_input("Ilość", min_value=0)
-            c = st.number_input("Cena", min_value=0.0)
+            n = st.text_input("Nazwa produktu")
+            l = st.number_input("Ilość początkowa", min_value=0)
+            c = st.number_input("Cena sprzedaży", min_value=0.0)
             k = st.selectbox("Kategoria", options=cats['id'].tolist(), format_func=lambda x: cats[cats['id']==x]['nazwa'].values[0])
-            if st.form_submit_button("Zatwierdź"):
+            if st.form_submit_button("Zatwierdź i Dodaj"):
                 supabase.table("produkty").insert({"nazwa": n, "liczba": l, "cena": c, "kategoria_id": k}).execute()
                 st.cache_data.clear()
                 st.rerun()
 
 # ==========================================
-# MODUŁ: KATEGORIE - POPRAWIONY
+# MODUŁ: KATEGORIE
 # ==========================================
 elif menu == "📂 Kategorie":
     st.title("📂 Zarządzanie Kategoriami")
@@ -189,21 +226,22 @@ elif menu == "📂 Kategorie":
     with c1:
         st.subheader("Nowa kategoria")
         with st.form("add_c", clear_on_submit=True):
-            name = st.text_input("Nazwa")
-            desc = st.text_area("Opis")
-            if st.form_submit_button("Dodaj"):
+            name = st.text_input("Nazwa kategorii")
+            desc = st.text_area("Opis (opcjonalnie)")
+            if st.form_submit_button("Dodaj kategorię"):
                 if name:
                     supabase.table("kategorie").insert({"nazwa": name, "opis": desc}).execute()
                     st.cache_data.clear()
                     st.rerun()
     with c2:
-        st.subheader("Lista")
+        st.subheader("Lista kategorii")
         st.dataframe(cats[['id', 'nazwa', 'opis']], hide_index=True, use_container_width=True)
-        cat_del = st.selectbox("Usuń kategorię", cats['id'].tolist(), format_func=lambda x: cats[cats['id']==x]['nazwa'].values[0])
-        if st.button("❌ Usuń"):
-            try:
-                supabase.table("kategorie").delete().eq("id", cat_del).execute()
-                st.cache_data.clear()
-                st.rerun()
-            except:
-                st.error("Nie można usunąć kategorii z produktami!")
+        if not cats.empty:
+            cat_del = st.selectbox("Wybierz kategorię do usunięcia", cats['id'].tolist(), format_func=lambda x: cats[cats['id']==x]['nazwa'].values[0])
+            if st.button("❌ Usuń zaznaczoną"):
+                try:
+                    supabase.table("kategorie").delete().eq("id", cat_del).execute()
+                    st.cache_data.clear()
+                    st.rerun()
+                except:
+                    st.error("Błąd: Nie można usunąć kategorii, w której są produkty.")
