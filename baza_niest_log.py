@@ -16,40 +16,59 @@ except Exception as e:
 
 st.set_page_config(page_title="Magazyn & POS PRO", layout="wide", page_icon="🏢")
 
-# --- DODANIE TŁA I STYLIZACJI CSS ---
+# --- DODANIE CIEKAWEGO RÓŻOWEGO TŁA I STYLIZACJI CSS ---
 def add_bg_and_style():
     st.markdown(
         """
         <style>
-        /* Tło główne aplikacji */
+        /* Tło główne - Gradient radialny z efektem ziarna/dodatkami */
         .stApp {
-            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            background-color: #ffdee9;
+            background-image: radial-gradient(at 0% 0%, hsla(339, 100%, 80%, 1) 0, transparent 50%), 
+                              radial-gradient(at 50% 0%, hsla(225, 100%, 80%, 1) 0, transparent 50%), 
+                              radial-gradient(at 100% 0%, hsla(339, 100%, 85%, 1) 0, transparent 50%),
+                              radial-gradient(at 0% 100%, hsla(339, 100%, 80%, 1) 0, transparent 50%),
+                              radial-gradient(at 100% 100%, hsla(225, 100%, 85%, 1) 0, transparent 50%);
             background-attachment: fixed;
         }
 
-        /* Stylizacja paska bocznego */
+        /* Stylizacja paska bocznego - efekt mrożonego szkła */
         [data-testid="stSidebar"] {
-            background-color: rgba(255, 255, 255, 0.8);
-            backdrop-filter: blur(10px);
+            background-color: rgba(255, 255, 255, 0.3);
+            backdrop-filter: blur(15px);
+            border-right: 1px solid rgba(255, 255, 255, 0.2);
         }
 
-        /* Zaokrąglenie kontenerów i kart */
+        /* Karty metryk - białe półprzezroczyste */
         div[data-testid="metric-container"] {
-            background-color: rgba(255, 255, 255, 0.6);
-            padding: 15px;
-            border-radius: 15px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            background-color: rgba(255, 255, 255, 0.5);
+            padding: 20px;
+            border-radius: 20px;
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.4);
+        }
+
+        /* Nagłówki */
+        h1, h2, h3 {
+            color: #4a4a4a;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
 
         /* Stylizacja przycisków */
         .stButton>button {
-            border-radius: 10px;
+            border-radius: 12px;
+            border: none;
+            background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 100%);
+            color: #4a4a4a;
+            font-weight: bold;
             transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
         }
         
         .stButton>button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            transform: scale(1.05);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.15);
+            background: linear-gradient(135deg, #fecfef 0%, #ff9a9e 100%);
         }
         </style>
         """,
@@ -82,14 +101,12 @@ def create_pdf_receipt(cart, total):
     pdf.cell(0, 10, f"Data: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ln=True, align="C")
     pdf.ln(10)
     
-    # Nagłówki
     pdf.set_font("helvetica", "B", 11)
     pdf.cell(80, 10, "Produkt", 1)
     pdf.cell(25, 10, "Ilosc", 1)
     pdf.cell(35, 10, "Cena jedn.", 1)
     pdf.cell(40, 10, "Suma", 1, ln=True)
     
-    # Pozycje
     pdf.set_font("helvetica", "", 11)
     for item in cart:
         pdf.cell(80, 10, str(item['nazwa']), 1)
@@ -111,10 +128,11 @@ if 'cart' not in st.session_state:
 menu = st.sidebar.radio("Nawigacja", ["📊 Dashboard", "🛒 Sprzedaż (POS)", "🍎 Magazyn", "📂 Kategorie"])
 
 # ==========================================
-# MODUŁ: DASHBOARD
+# MODUŁY APLIKACJI
 # ==========================================
+
 if menu == "📊 Dashboard":
-    st.title("📊 Statystyki")
+    st.title("📊 Statystyki Magazynu")
     prods = fetch_products()
     if not prods.empty:
         c1, c2, c3 = st.columns(3)
@@ -122,15 +140,13 @@ if menu == "📊 Dashboard":
         c1.metric("Wartość magazynu", f"{total_v:,.2f} zł")
         c2.metric("Pozycje", len(prods))
         c3.metric("Niskie stany (<5)", len(prods[prods['liczba'] < 5]))
+        st.divider()
+        st.subheader("Ilość produktów na stanie")
         st.bar_chart(prods.set_index('nazwa')['liczba'])
 
-# ==========================================
-# MODUŁ: SPRZEDAŻ (POS)
-# ==========================================
 elif menu == "🛒 Sprzedaż (POS)":
     st.title("🛒 Punkt Sprzedaży")
     prods = fetch_products()
-    
     if prods.empty:
         st.warning("Dodaj produkty w zakładce Magazyn.")
     else:
@@ -140,10 +156,8 @@ elif menu == "🛒 Sprzedaż (POS)":
             p_sel = st.selectbox("Wybierz produkt", prods['nazwa'].tolist())
             p_data = prods[prods['nazwa'] == p_sel].iloc[0]
             max_qty = int(p_data['liczba'])
-            
             st.info(f"Stan: {max_qty} | Cena: {p_data['cena']} zł")
             qty = st.number_input("Ilość", min_value=1, max_value=max(1, max_qty), step=1)
-            
             if st.button("➕ Dodaj do koszyka"):
                 if max_qty > 0:
                     st.session_state.cart.append({
@@ -154,7 +168,6 @@ elif menu == "🛒 Sprzedaż (POS)":
                     st.rerun()
                 else:
                     st.error("Brak towaru!")
-
         with col_out:
             st.subheader("Paragon")
             if st.session_state.cart:
@@ -162,18 +175,15 @@ elif menu == "🛒 Sprzedaż (POS)":
                 st.dataframe(df_cart[['nazwa', 'ilosc', 'suma']], use_container_width=True, hide_index=True)
                 total_sum = df_cart['suma'].sum()
                 st.write(f"### Suma: {total_sum:.2f} zł")
-                
                 if st.button("🗑️ Wyczyść koszyk"):
                     st.session_state.cart = []
                     st.rerun()
-                
                 if st.button("✅ FINALIZUJ I POBIERZ PDF", type="primary"):
                     try:
                         for item in st.session_state.cart:
                             res = supabase.table("produkty").select("liczba").eq("id", item['id']).execute()
                             new_val = int(res.data[0]['liczba']) - item['ilosc']
                             supabase.table("produkty").update({"liczba": new_val}).eq("id", item['id']).execute()
-                        
                         pdf_data = create_pdf_receipt(st.session_state.cart, total_sum)
                         st.success("Sprzedaż zakończona!")
                         st.download_button("📥 Pobierz Paragon", data=pdf_data, file_name="paragon.pdf", mime="application/pdf")
@@ -184,18 +194,12 @@ elif menu == "🛒 Sprzedaż (POS)":
             else:
                 st.info("Koszyk jest pusty.")
 
-# ==========================================
-# MODUŁ: MAGAZYN
-# ==========================================
 elif menu == "🍎 Magazyn":
     st.title("🍎 Zarządzanie Magazynem")
     prods = fetch_products()
     cats = fetch_categories()
-    
     t1, t2 = st.tabs(["📋 Lista i Edycja", "➕ Dodaj Produkt"])
-    
     with t1:
-        st.write("Edytuj dane bezpośrednio w tabeli i kliknij Zapisz.")
         edited = st.data_editor(prods[['id', 'nazwa', 'liczba', 'cena', 'nazwa_kategorii']], 
                                hide_index=True, disabled=["id", "nazwa_kategorii"])
         if st.button("💾 Zapisz zmiany"):
@@ -203,45 +207,38 @@ elif menu == "🍎 Magazyn":
                 supabase.table("produkty").update({"liczba": int(row['liczba']), "cena": float(row['cena'])}).eq("id", row['id']).execute()
             st.cache_data.clear()
             st.rerun()
-
     with t2:
         with st.form("new_p"):
             n = st.text_input("Nazwa produktu")
-            l = st.number_input("Ilość początkowa", min_value=0)
-            c = st.number_input("Cena sprzedaży", min_value=0.0)
+            l = st.number_input("Ilość", min_value=0)
+            c = st.number_input("Cena", min_value=0.0)
             k = st.selectbox("Kategoria", options=cats['id'].tolist(), format_func=lambda x: cats[cats['id']==x]['nazwa'].values[0])
-            if st.form_submit_button("Zatwierdź i Dodaj"):
+            if st.form_submit_button("Zatwierdź"):
                 supabase.table("produkty").insert({"nazwa": n, "liczba": l, "cena": c, "kategoria_id": k}).execute()
                 st.cache_data.clear()
                 st.rerun()
 
-# ==========================================
-# MODUŁ: KATEGORIE
-# ==========================================
 elif menu == "📂 Kategorie":
-    st.title("📂 Zarządzanie Kategoriami")
+    st.title("📂 Kategorie")
     cats = fetch_categories()
-    
     c1, c2 = st.columns([1, 2])
     with c1:
-        st.subheader("Nowa kategoria")
         with st.form("add_c", clear_on_submit=True):
             name = st.text_input("Nazwa kategorii")
-            desc = st.text_area("Opis (opcjonalnie)")
-            if st.form_submit_button("Dodaj kategorię"):
+            desc = st.text_area("Opis")
+            if st.form_submit_button("Dodaj"):
                 if name:
                     supabase.table("kategorie").insert({"nazwa": name, "opis": desc}).execute()
                     st.cache_data.clear()
                     st.rerun()
     with c2:
-        st.subheader("Lista kategorii")
         st.dataframe(cats[['id', 'nazwa', 'opis']], hide_index=True, use_container_width=True)
         if not cats.empty:
-            cat_del = st.selectbox("Wybierz kategorię do usunięcia", cats['id'].tolist(), format_func=lambda x: cats[cats['id']==x]['nazwa'].values[0])
-            if st.button("❌ Usuń zaznaczoną"):
+            cat_del = st.selectbox("Usuń", cats['id'].tolist(), format_func=lambda x: cats[cats['id']==x]['nazwa'].values[0])
+            if st.button("❌ Usuń"):
                 try:
                     supabase.table("kategorie").delete().eq("id", cat_del).execute()
                     st.cache_data.clear()
                     st.rerun()
                 except:
-                    st.error("Błąd: Nie można usunąć kategorii, w której są produkty.")
+                    st.error("Kategoria ma produkty!")
