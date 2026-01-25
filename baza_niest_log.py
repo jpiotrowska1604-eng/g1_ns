@@ -11,31 +11,29 @@ try:
     key: str = st.secrets["SUPABASE_KEY"]
     supabase: Client = create_client(url, key)
 except Exception as e:
-    st.error("Błąd konfiguracji Secrets! Upewnij się, że podałeś SUPABASE_URL i SUPABASE_KEY.")
+    st.error("Błąd konfiguracji Secrets! Sprawdź SUPABASE_URL i SUPABASE_KEY w ustawieniach Streamlit.")
     st.stop()
 
-st.set_page_config(page_title="Magazyn & Sprzedaż PRO", layout="wide", page_icon="🏢")
+st.set_page_config(page_title="Magazyn & POS PRO", layout="wide", page_icon="🏢")
 
-# --- 2. FUNKCJE DANYCH (Z CACHE) ---
-@st.cache_data(ttl=5)
+# --- 2. FUNKCJE DANYCH ---
+@st.cache_data(ttl=2)
 def fetch_categories():
     res = supabase.table("kategorie").select("*").execute()
     return pd.DataFrame(res.data)
 
-@st.cache_data(ttl=5)
+@st.cache_data(ttl=2)
 def fetch_products():
     res = supabase.table("produkty").select("*, kategorie(nazwa)").execute()
     data = res.data
     for item in data:
-        # Płaskie mapowanie nazwy kategorii dla łatwiejszego filtrowania
         item['nazwa_kategorii'] = item['kategorie']['nazwa'] if item.get('kategorie') else "Brak"
     return pd.DataFrame(data)
 
-# --- 3. GENERATOR PDF ---
+# --- 3. NAPRAWIONY GENERATOR PDF ---
 def create_pdf_receipt(cart, total):
     pdf = FPDF()
     pdf.add_page()
-    # fpdf2 używa standardowych fontów, jeśli nie dodasz własnych .ttf (obsługa polskich znaków wymaga dodania fontu)
     pdf.set_font("helvetica", "B", 16)
     pdf.cell(0, 10, "POTWIERDZENIE SPRZEDAZY", ln=True, align="C")
     pdf.set_font("helvetica", "", 10)
@@ -59,106 +57,93 @@ def create_pdf_receipt(cart, total):
     
     pdf.ln(5)
     pdf.set_font("helvetica", "B", 14)
-    pdf.cell(0, 10, f"DO ZAPLATY: {total:.2f} PLN", ln=True, align="R")
-    return pdf.output()
+    pdf.cell(0, 10, f"RAZEM: {total:.2f} PLN", ln=True, align="R")
+    
+    # Zwracamy dane jako czyste bajty (rozwiązuje błąd bytearray)
+    return bytes(pdf.output())
 
-# --- 4. STAN SESJI (KOSZYK) ---
+# --- 4. STAN SESJI ---
 if 'cart' not in st.session_state:
     st.session_state.cart = []
 
-# --- 5. NAWIGACJA ---
-menu = st.sidebar.radio("Menu Główne", ["📊 Dashboard", "🛒 Sprzedaż (POS)", "🍎 Magazyn", "📂 Kategorie"])
+# --- 5. MENU ---
+menu = st.sidebar.radio("Nawigacja", ["📊 Dashboard", "🛒 Sprzedaż (POS)", "🍎 Magazyn", "📂 Kategorie"])
 
 # ==========================================
 # MODUŁ: DASHBOARD
 # ==========================================
 if menu == "📊 Dashboard":
-    st.title("📊 Statystyki Magazynowe")
+    st.title("📊 Statystyki")
     prods = fetch_products()
-    
     if not prods.empty:
         c1, c2, c3 = st.columns(3)
-        total_value = (prods['cena'] * prods['liczba']).sum()
-        c1.metric("Wartość magazynu", f"{total_value:,.2f} zł")
-        c2.metric("Liczba produktów", len(prods))
+        total_v = (prods['cena'] * prods['liczba']).sum()
+        c1.metric("Wartość magazynu", f"{total_v:,.2f} zł")
+        c2.metric("Pozycje", len(prods))
         c3.metric("Niskie stany (<5)", len(prods[prods['liczba'] < 5]))
-        
-        st.subheader("Ilość towarów na stanie")
         st.bar_chart(prods.set_index('nazwa')['liczba'])
-    else:
-        st.info("Baza danych jest pusta. Dodaj produkty w zakładce Magazyn.")
 
 # ==========================================
-# MODUŁ: SPRZEDAŻ (POS)
+# MODUŁ: SPRZEDAŻ (POS) - PEŁNA POPRAWKA
 # ==========================================
 elif menu == "🛒 Sprzedaż (POS)":
     st.title("🛒 Punkt Sprzedaży")
     prods = fetch_products()
     
     if prods.empty:
-        st.warning("Najpierw dodaj produkty do magazynu!")
+        st.warning("Dodaj produkty w zakładce Magazyn.")
     else:
         col_in, col_out = st.columns([1, 1])
-        
         with col_in:
-            st.subheader("Wybierz produkt")
+            st.subheader("Dodaj do koszyka")
             p_sel = st.selectbox("Produkt", prods['nazwa'].tolist())
             p_data = prods[prods['nazwa'] == p_sel].iloc[0]
+            max_qty = int(p_data['liczba'])
             
-            # Wymuszamy typ int dla bezpieczeństwa obliczeń
-            current_stock = int(p_data['liczba'])
+            st.info(f"Stan: {max_qty} | Cena: {p_data['cena']} zł")
+            qty = st.number_input("Ilość", min_value=1, max_value=max(1, max_qty), step=1)
             
-            st.info(f"Stan: {current_stock} | Cena: {p_data['cena']} zł")
-            
-            qty = st.number_input("Sztuk", min_value=1, max_value=max(1, current_stock), step=1)
-            
-            if st.button("➕ Dodaj do paragonu"):
-                if current_stock <= 0:
-                    st.error("Brak produktu na stanie!")
-                else:
+            if st.button("➕ Dodaj"):
+                if max_qty > 0:
                     st.session_state.cart.append({
-                        "id": int(p_data['id']), 
-                        "nazwa": p_sel, 
-                        "cena": float(p_data['cena']), 
-                        "ilosc": int(qty), 
+                        "id": int(p_data['id']), "nazwa": p_sel, 
+                        "cena": float(p_data['cena']), "ilosc": int(qty), 
                         "suma": float(p_data['cena'] * qty)
                     })
-                    st.toast(f"Dodano {p_sel}")
+                    st.rerun()
+                else:
+                    st.error("Brak towaru!")
 
         with col_out:
             st.subheader("Paragon")
             if st.session_state.cart:
-                cart_df = pd.DataFrame(st.session_state.cart)
-                st.dataframe(cart_df[['nazwa', 'ilosc', 'suma']], hide_index=True, use_container_width=True)
-                total_sum = cart_df['suma'].sum()
-                st.write(f"### Razem: {total_sum:.2f} zł")
+                df_cart = pd.DataFrame(st.session_state.cart)
+                st.dataframe(df_cart[['nazwa', 'ilosc', 'suma']], use_container_width=True, hide_index=True)
+                total_sum = df_cart['suma'].sum()
+                st.write(f"### Suma: {total_sum:.2f} zł")
                 
-                c_del, c_fin = st.columns(2)
-                if c_del.button("🗑️ Wyczyść", use_container_width=True):
+                if st.button("🗑️ Wyczyść koszyk"):
                     st.session_state.cart = []
                     st.rerun()
                 
-                if c_fin.button("✅ FINALIZUJ", type="primary", use_container_width=True):
+                if st.button("✅ FINALIZUJ I POBIERZ PDF", type="primary"):
                     try:
+                        # Aktualizacja bazy danych
                         for item in st.session_state.cart:
-                            # 1. Pobierz aktualny stan z bazy (świeży)
-                            db_res = supabase.table("produkty").select("liczba").eq("id", item['id']).execute()
-                            stock_now = int(db_res.data[0]['liczba'])
-                            
-                            # 2. Oblicz i zaktualizuj
-                            new_val = stock_now - item['ilosc']
+                            res = supabase.table("produkty").select("liczba").eq("id", item['id']).execute()
+                            new_val = int(res.data[0]['liczba']) - item['ilosc']
                             supabase.table("produkty").update({"liczba": new_val}).eq("id", item['id']).execute()
                         
-                        # 3. Generuj PDF
-                        receipt_pdf = create_pdf_receipt(st.session_state.cart, total_sum)
+                        # Generowanie PDF
+                        pdf_data = create_pdf_receipt(st.session_state.cart, total_sum)
                         
-                        st.success("Transakcja zakończona!")
-                        st.download_button("📥 Pobierz Paragon PDF", data=receipt_pdf, file_name="paragon.pdf", mime="application/pdf")
+                        st.success("Sprzedaż zakończona!")
+                        st.download_button("📥 Pobierz Paragon", data=pdf_data, file_name="paragon.pdf", mime="application/pdf")
                         
                         st.session_state.cart = []
                         st.cache_data.clear()
                     except Exception as e:
-                        st.error(f"Błąd transakcji: {e}")
+                        st.error(f"Błąd transakcji: {str(e)}")
             else:
                 st.info("Koszyk jest pusty.")
 
@@ -170,46 +155,55 @@ elif menu == "🍎 Magazyn":
     prods = fetch_products()
     cats = fetch_categories()
     
-    tab_list, tab_add = st.tabs(["📋 Lista i Edycja", "🆕 Nowy Produkt"])
+    t1, t2 = st.tabs(["📋 Lista i Edycja", "➕ Dodaj Produkt"])
     
-    with tab_list:
-        st.info("Kliknij w komórkę 'liczba' lub 'cena', aby szybko edytować i kliknij Zapisz poniżej.")
+    with t1:
+        st.write("Edytuj dane bezpośrednio w tabeli i kliknij Zapisz.")
         edited = st.data_editor(prods[['id', 'nazwa', 'liczba', 'cena', 'nazwa_kategorii']], 
-                                hide_index=True, disabled=["id", "nazwa_kategorii"], use_container_width=True)
-        
-        if st.button("💾 Zapisz zmiany w bazie"):
+                               hide_index=True, disabled=["id", "nazwa_kategorii"])
+        if st.button("💾 Zapisz zmiany"):
             for _, row in edited.iterrows():
                 supabase.table("produkty").update({"liczba": int(row['liczba']), "cena": float(row['cena'])}).eq("id", row['id']).execute()
-            st.success("Zaktualizowano magazyn!")
             st.cache_data.clear()
             st.rerun()
 
-    with tab_add:
-        if cats.empty:
-            st.error("Najpierw musisz dodać kategorię!")
-        else:
-            with st.form("new_product_form"):
-                n = st.text_input("Nazwa produktu")
-                l = st.number_input("Ilość", min_value=0)
-                c = st.number_input("Cena", min_value=0.0)
-                k = st.selectbox("Kategoria", options=cats['id'].tolist(), format_func=lambda x: cats[cats['id']==x]['nazwa'].values[0])
-                if st.form_submit_button("Dodaj produkt"):
-                    if n:
-                        supabase.table("produkty").insert({"nazwa": n, "liczba": l, "cena": c, "kategoria_id": k}).execute()
-                        st.success("Dodano produkt!")
-                        st.cache_data.clear()
-                        st.rerun()
+    with t2:
+        with st.form("new_p"):
+            n = st.text_input("Nazwa")
+            l = st.number_input("Ilość", min_value=0)
+            c = st.number_input("Cena", min_value=0.0)
+            k = st.selectbox("Kategoria", options=cats['id'].tolist(), format_func=lambda x: cats[cats['id']==x]['nazwa'].values[0])
+            if st.form_submit_button("Zatwierdź"):
+                supabase.table("produkty").insert({"nazwa": n, "liczba": l, "cena": c, "kategoria_id": k}).execute()
+                st.cache_data.clear()
+                st.rerun()
 
 # ==========================================
-# MODUŁ: KATEGORIE (PEŁNY I POPRAWIONY)
+# MODUŁ: KATEGORIE - POPRAWIONY
 # ==========================================
 elif menu == "📂 Kategorie":
     st.title("📂 Zarządzanie Kategoriami")
     cats = fetch_categories()
     
-    c_add, c_list = st.columns([1, 2])
-    
-    with c_add:
+    c1, c2 = st.columns([1, 2])
+    with c1:
         st.subheader("Nowa kategoria")
-        with st.form("form_category", clear_on_submit=True):
-            new_cat_name = st.text_input("Nazwa")
+        with st.form("add_c", clear_on_submit=True):
+            name = st.text_input("Nazwa")
+            desc = st.text_area("Opis")
+            if st.form_submit_button("Dodaj"):
+                if name:
+                    supabase.table("kategorie").insert({"nazwa": name, "opis": desc}).execute()
+                    st.cache_data.clear()
+                    st.rerun()
+    with c2:
+        st.subheader("Lista")
+        st.dataframe(cats[['id', 'nazwa', 'opis']], hide_index=True, use_container_width=True)
+        cat_del = st.selectbox("Usuń kategorię", cats['id'].tolist(), format_func=lambda x: cats[cats['id']==x]['nazwa'].values[0])
+        if st.button("❌ Usuń"):
+            try:
+                supabase.table("kategorie").delete().eq("id", cat_del).execute()
+                st.cache_data.clear()
+                st.rerun()
+            except:
+                st.error("Nie można usunąć kategorii z produktami!")
